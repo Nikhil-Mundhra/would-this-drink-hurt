@@ -1,37 +1,35 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   ChartLine,
-  Flask,
   Gauge,
-  BookOpenText,
-  User,
+  Sliders,
   Warning,
   X,
 } from "@phosphor-icons/react";
 import { useStore, useNow } from "../lib/store";
 import { initials, formatTime } from "../lib/format";
+import { ProfileDrawer } from "./ProfileDrawer";
 
 export const ROUTES = [
-  { id: "session", label: "Session", icon: Gauge, key: "1" },
-  { id: "baseline", label: "Baseline", icon: User, key: "2" },
-  { id: "labs", label: "Labs", icon: Flask, key: "3" },
-  { id: "history", label: "History", icon: ChartLine, key: "4" },
-  { id: "method", label: "Method", icon: BookOpenText, key: "5" },
+  { id: "session", label: "Today's Session", icon: Gauge, key: "1" },
+  { id: "history", label: "Long-Term Plan", icon: ChartLine, key: "2" },
 ] as const;
 
-export type RouteId = (typeof ROUTES)[number]["id"];
+export type RouteId = "session" | "history" | "baseline" | "labs" | "method";
+
+const ALL_ROUTES: RouteId[] = ["session", "history", "baseline", "labs", "method"];
 
 export function currentRoute(): RouteId {
   const hash = window.location.hash.replace(/^#\/?/, "");
-  const found = ROUTES.find((r) => r.id === hash);
-  return found ? found.id : "session";
+  return ALL_ROUTES.includes(hash as RouteId) ? (hash as RouteId) : "session";
 }
 
 export function Shell({ route, children }: { route: RouteId; children: ReactNode }) {
   const { state, clearExampleData } = useStore();
   const now = useNow();
+  const [profileOpen, setProfileOpen] = useState(false);
   const page = ROUTES.find((r) => r.id === route);
-  const active = ROUTES.map((r) => r.id).includes(route);
+  const active = ALL_ROUTES.includes(route);
 
   return (
     <div className="app-shell">
@@ -45,7 +43,7 @@ export function Shell({ route, children }: { route: RouteId; children: ReactNode
         </a>
 
         <nav className="rail-nav">
-          <div className="rail-section">Instrument</div>
+          <div className="rail-section">Navigation</div>
           {ROUTES.map((r) => {
             const Icon = r.icon;
             return (
@@ -65,15 +63,24 @@ export function Shell({ route, children }: { route: RouteId; children: ReactNode
         </nav>
 
         <div className="rail-foot">
-          <div className="rail-profile">
-            <span className="avatar">{initials(state.profile.name || "Your profile")}</span>
-            <div className="min-w-0">
-              <div className="truncate text-[12px] text-ink">{state.profile.name || "Your profile"}</div>
-              <div className="micro">{state.profile.age} y · {state.profile.sex === "male" ? "male" : "female"}</div>
+          <button
+            type="button"
+            onClick={() => setProfileOpen(true)}
+            className="rail-profile w-full text-left hover:bg-[rgba(255,255,255,0.03)] p-2 rounded-lg transition-all"
+            title="Calibrate your body weight & sex"
+          >
+            <span className="avatar">{initials(state.profile.name || "User")}</span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[12px] text-ink font-medium">
+                {state.profile.weightKg || 75} kg · {state.profile.sex === "female" ? "Female" : "Male"}
+              </div>
+              <div className="micro text-[var(--color-accent)] flex items-center gap-1">
+                <Sliders size={11} /> Body Specs
+              </div>
             </div>
-          </div>
-          <p className="rail-note">
-            A model, not a medical device. It cannot clear you to drive.
+          </button>
+          <p className="rail-note mt-2">
+            Metabolic model. Does not clear you to drive.
           </p>
         </div>
       </aside>
@@ -81,14 +88,18 @@ export function Shell({ route, children }: { route: RouteId; children: ReactNode
       <div className="main-col">
         <header className="topbar">
           <div className="topbar-crumb">
-            WTDH <span className="px-1.5 text-faint">/</span> <b>{page?.label ?? "Session"}</b>
+            WTDH <span className="px-1.5 text-faint">/</span> <b>{page?.label ?? "Today's Session"}</b>
           </div>
           <div className="topbar-right">
-            <span className="badge hidden sm:inline-flex">
-              <span className="dot dot-live" />
-              model v1.0
-            </span>
-            <span className="clock">{formatTime(now)}</span>
+            <button
+              type="button"
+              onClick={() => setProfileOpen(true)}
+              className="btn btn-sm flex items-center gap-1.5 text-[12px]"
+            >
+              <Sliders size={13} className="text-[var(--color-accent)]" />
+              <span>{state.profile.weightKg || 75} kg · {state.profile.sex === "female" ? "F" : "M"}</span>
+            </button>
+            <span className="clock font-mono text-[12px] text-muted">{formatTime(now)}</span>
           </div>
         </header>
 
@@ -96,17 +107,11 @@ export function Shell({ route, children }: { route: RouteId; children: ReactNode
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-[var(--color-line)] bg-[rgba(240,180,85,0.05)] px-4 py-2 md:px-6">
             <span className="flex items-center gap-1.5 text-[10px] text-[var(--color-warn)]">
               <Warning size={12} weight="fill" />
-              Example profile, session and labs
-            </span>
-            <span className="micro">
-              Nothing here describes you until you replace it.
+              Demo session active
             </span>
             <div className="ml-auto flex items-center gap-2">
-              <a href="#/baseline" className="btn btn-sm">
-                Edit baseline
-              </a>
               <button type="button" className="btn btn-sm" onClick={clearExampleData}>
-                <X size={11} /> Clear example
+                <X size={11} /> Clear demo
               </button>
             </div>
           </div>
@@ -130,7 +135,9 @@ export function Shell({ route, children }: { route: RouteId; children: ReactNode
           })}
         </nav>
       </div>
-      {!active && <span className="sr-only">Unknown page, showing session</span>}
+
+      <ProfileDrawer open={profileOpen} onClose={() => setProfileOpen(false)} />
+      {!active && <span className="sr-only">Showing session</span>}
     </div>
   );
 }

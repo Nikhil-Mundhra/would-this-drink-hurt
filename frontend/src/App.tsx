@@ -1,19 +1,18 @@
 import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
-import { StoreProvider, useStore } from "./lib/store";
+import { StoreProvider } from "./lib/store";
 import { Shell, currentRoute, type RouteId } from "./components/Shell";
-import { Onboarding } from "./pages/Onboarding";
 import { SessionPage } from "./pages/Session";
+import { HistoryPage } from "./pages/History";
 import { BaselinePage } from "./pages/Baseline";
 import { LabsPage } from "./pages/Labs";
-import { HistoryPage } from "./pages/History";
 import { MethodPage } from "./pages/Method";
 
-const TITLES: Record<RouteId, string> = {
-  session: "Session",
-  baseline: "Baseline",
-  labs: "Labs",
-  history: "History",
-  method: "Method",
+const TITLES: Record<string, string> = {
+  session: "Today's Session",
+  history: "Long-Term Plan",
+  baseline: "Baseline Calibration",
+  labs: "Clinical Labs",
+  method: "Pharmacokinetic Method",
 };
 
 function useHashRoute(): RouteId {
@@ -27,11 +26,10 @@ function useHashRoute(): RouteId {
 }
 
 function Instrument() {
-  const { state } = useStore();
   const route = useHashRoute();
 
   useEffect(() => {
-    document.title = `WTDH · ${TITLES[route]} · Metabolic alcohol model`;
+    document.title = `WTDH · ${TITLES[route] ?? "Session"} · Metabolic alcohol model`;
   }, [route]);
 
   useEffect(() => {
@@ -41,10 +39,7 @@ function Instrument() {
       if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
       const map: Record<string, RouteId> = {
         "1": "session",
-        "2": "baseline",
-        "3": "labs",
-        "4": "history",
-        "5": "method",
+        "2": "history",
       };
       const next = map[e.key];
       if (next) {
@@ -56,15 +51,13 @@ function Instrument() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  if (!state.onboarded) return <Onboarding />;
-
   return (
     <Shell route={route}>
-      {route === "session" && <SessionPage />}
+      {route === "history" && <HistoryPage />}
       {route === "baseline" && <BaselinePage />}
       {route === "labs" && <LabsPage />}
-      {route === "history" && <HistoryPage />}
       {route === "method" && <MethodPage />}
+      {route === "session" && <SessionPage />}
     </Shell>
   );
 }

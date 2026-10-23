@@ -1,772 +1,777 @@
 import { useMemo, useState } from "react";
 import {
-  ArrowClockwise,
   BeerStein,
-  CaretDown,
+  CheckCircle,
+  Clock,
   Drop,
   ForkKnife,
-  Info,
-  Martini,
+  MagnifyingGlass,
   Plus,
+  ShieldCheck,
+  ShieldWarning,
   Trash,
-  WarningCircle,
+  Warning,
   Wine,
+  Martini,
+  ArrowCounterClockwise,
 } from "@phosphor-icons/react";
-import {
-  ALDH2_CAPACITY,
-  bacUnits,
-  formatDuration,
-  sampleAt,
-  type Drink,
-  type SimulationResult,
-} from "@wtdh/engine";
 import { useStore, useNow } from "../lib/store";
 import { useSimulation } from "../lib/useSimulation";
-import {
-  bacDisplay,
-  formatTime,
-  grams,
-  pct,
-  RISK_EXPLANATION,
-  RISK_LABEL,
-  riskTone,
-} from "../lib/format";
-import { DRINK_PRESETS, QUICK_WATER, type DrinkPreset } from "../lib/data";
-import { Badge, NumberInput, Panel, Stat, Toggle } from "../components/ui";
-import { HeadroomGauge } from "../components/HeadroomGauge";
+import { formatTime, bacDisplay, grams } from "../lib/format";
+import { DRINK_PRESETS, type DrinkPreset } from "../lib/data";
+import { BEVERAGE_DATABASE, type BeverageItem } from "../lib/beverageDatabase";
 import { BacChart } from "../components/BacChart";
 import { AcetaldehydeChart, MiniMeter } from "../components/charts";
 
-const KIND_ICON = {
-  beer: BeerStein,
-  wine: Wine,
-  cocktail: Martini,
-  spirit: Martini,
-};
+type LogTab = "drink" | "food" | "water";
 
 export function SessionPage() {
-  const { state, now, addDrink, removeDrink, addWater, addMeal, removeMeal, resetSession, addSensor } = useStore();
-  const { profile, session } = state;
-  const [offset, setOffset] = useState(0);
-  const at = now + offset * 60_000;
-  const result = useSimulation(at);
-  const { summary } = result;
-  const current = sampleAt(result.samples, at) ?? result.samples[0];
+  const { state, now, addDrink, removeDrink, addMeal, removeMeal, addWater, resetSession } = useStore();
+  const { session } = state;
+  const simulation = useSimulation();
+  const { summary } = simulation;
 
-  const action = nextAction(result, offset);
-  const lastDrink = useMemo(
-    () => [...session.drinks].sort((a, b) => b.at - a.at)[0],
-    [session.drinks],
-  );
+  // Time selector state
+  const [timeOffsetMinutes, setTimeOffsetMinutes] = useState<number>(0);
+  const [customTime, setCustomTime] = useState<string>("");
+  const [useCustomTime, setUseCustomTime] = useState<boolean>(false);
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<LogTab>("drink");
+
+  // Drink search state
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [showCustomDrink, setShowCustomDrink] = useState<boolean>(false);
+  const [customName, setCustomName] = useState<string>("");
+  const [customVolume, setCustomVolume] = useState<number>(330);
+  const [customAbv, setCustomAbv] = useState<number>(5.0);
+
+  // Calculate timestamp based on selector
+  const selectedTimestamp = useMemo(() => {
+    if (useCustomTime && customTime) {
+      const [hours, minutes] = customTime.split(":").map(Number);
+      const d = new Date(now);
+      d.setHours(hours, minutes, 0, 0);
+      return d.getTime();
+    }
+    return now - timeOffsetMinutes * 60_000;
+  }, [now, timeOffsetMinutes, useCustomTime, customTime]);
+
+  // Filtered beverage database
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase();
+    return BEVERAGE_DATABASE.filter(
+      (b) =>
+        b["Brand Name"].toLowerCase().includes(q) ||
+        b["Specific Product / Expression"].toLowerCase().includes(q) ||
+        b["Sub-Type"].toLowerCase().includes(q) ||
+        b["Category"].toLowerCase().includes(q),
+    ).slice(0, 8);
+  }, [searchQuery]);
+
+  // Risk Classification
+  const riskInfo = useMemo(() => {
+    const bac = summary.currentBac;
+    const peak = summary.peakBac;
+
+    if (bac < 0.005 && session.drinks.length === 0) {
+      return {
+        tier: "CLEAR",
+        label: "Clear / Zero Risk",
+        badgeClass: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+        bgBanner: "border-[var(--color-line)] bg-[var(--color-surface)]",
+        icon: ShieldCheck,
+        summary: "No active alcohol load detected.",
+        advice: "Normal metabolic baseline. Safe to drive.",
+        color: "#10b981",
+      };
+    }
+
+    if (bac < 0.04 && peak < 0.05) {
+      return {
+        tier: "LOW",
+        label: "Low Risk",
+        badgeClass: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+        bgBanner: "border-emerald-500/30 bg-emerald-950/10",
+        icon: ShieldCheck,
+        summary: "Mild relaxation. Low metabolic strain.",
+        advice: "Coordination is largely intact. Moderate pacing recommended.",
+        color: "#10b981",
+      };
+    }
+
+    if (bac < 0.08 && peak < 0.08) {
+      return {
+        tier: "MEDIUM",
+        label: "Medium Risk",
+        badgeClass: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+        bgBanner: "border-amber-500/30 bg-amber-950/10",
+        icon: Warning,
+        summary: "Noticeable reaction time delay & sensory reduction.",
+        advice: "Driving and operating machinery are unsafe. Tonight's REM sleep will be reduced.",
+        color: "#f59e0b",
+      };
+    }
+
+    return {
+      tier: "HIGH",
+      label: "High Risk",
+      badgeClass: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+      bgBanner: "border-rose-500/30 bg-rose-950/15",
+      icon: ShieldWarning,
+      summary: "Significant cognitive & motor impairment.",
+      advice: "Do not drive. High acetaldehyde accumulation. Hydrate with water and rest.",
+      color: "#f43f5e",
+    };
+  }, [summary.currentBac, summary.peakBac, session.drinks.length]);
+
+  // Handlers
+  const handleLogPresetDrink = (preset: DrinkPreset) => {
+    addDrink(
+      {
+        volumeMl: preset.volumeMl,
+        abv: preset.abv,
+        label: preset.label,
+        carbonated: preset.carbonated,
+      },
+      selectedTimestamp,
+    );
+  };
+
+  const handleLogDatabaseDrink = (bev: BeverageItem) => {
+    addDrink(
+      {
+        volumeMl: bev["Standard Serving Size (ml)"],
+        abv: bev["Standard ABV (%)"],
+        label: `${bev["Brand Name"]} - ${bev["Specific Product / Expression"]}`,
+      },
+      selectedTimestamp,
+    );
+    setSearchQuery("");
+  };
+
+  const handleLogCustomDrink = () => {
+    if (!customName.trim() || customVolume <= 0 || customAbv <= 0) return;
+    addDrink(
+      {
+        volumeMl: customVolume,
+        abv: customAbv,
+        label: customName.trim(),
+      },
+      selectedTimestamp,
+    );
+    setShowCustomDrink(false);
+    setCustomName("");
+  };
+
+  const handleLogMeal = (size: "snack" | "meal" | "large", fat: "low" | "medium" | "high", protein: "low" | "medium" | "high") => {
+    addMeal(
+      {
+        size,
+        fat,
+        protein,
+      },
+      selectedTimestamp,
+    );
+  };
+
+  const handleLogWater = (volumeMl: number) => {
+    addWater(volumeMl, selectedTimestamp);
+  };
+
+  // Combine timeline events
+  const timelineEvents = useMemo(() => {
+    const list: Array<{
+      id: string;
+      at: number;
+      type: "drink" | "meal" | "water";
+      title: string;
+      subtitle: string;
+    }> = [];
+
+    session.drinks.forEach((d) => {
+      const pureG = d.volumeMl * (d.abv / 100) * 0.78924;
+      list.push({
+        id: d.id,
+        at: d.at,
+        type: "drink",
+        title: d.label,
+        subtitle: `${d.volumeMl} ml · ${d.abv}% ABV · ${pureG.toFixed(1)}g alcohol`,
+      });
+    });
+
+    session.meals.forEach((m) => {
+      const sizeLabel = m.size === "snack" ? "Light Snack" : m.size === "large" ? "Heavy / High-Fat Meal" : "Balanced Meal";
+      list.push({
+        id: m.id,
+        at: m.at,
+        type: "meal",
+        title: sizeLabel,
+        subtitle: `Buffers peak absorption · Fat: ${m.fat} · Protein: ${m.protein}`,
+      });
+    });
+
+    session.waters.forEach((w) => {
+      list.push({
+        id: w.id,
+        at: w.at,
+        type: "water",
+        title: "Water",
+        subtitle: `${w.volumeMl} ml hydration`,
+      });
+    });
+
+    return list.sort((a, b) => b.at - a.at);
+  }, [session]);
+
+  const IconRisk = riskInfo.icon;
 
   return (
-    <div>
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <div className="label">Session / {new Date(at).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}</div>
-          <h1 className="display mt-2 text-[clamp(1.7rem,2.6vw,2.35rem)]">The curve, not the guess.</h1>
+    <div className="space-y-6 max-w-5xl mx-auto pb-12">
+      {/* 1. PRIMARY RISK BANNER */}
+      <div className={`p-5 sm:p-6 rounded-xl border ${riskInfo.bgBanner} shadow-lg transition-all`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold border ${riskInfo.badgeClass}`}>
+                <IconRisk size={15} weight="bold" />
+                {riskInfo.label.toUpperCase()}
+              </span>
+              <span className="text-[12px] text-muted">Real-Time Risk State</span>
+            </div>
+            <h1 className="text-[22px] sm:text-[28px] font-semibold text-ink mt-2 tracking-tight">
+              {riskInfo.summary}
+            </h1>
+            <p className="text-[13px] text-muted mt-1 max-w-2xl leading-relaxed">
+              {riskInfo.advice}
+            </p>
+          </div>
+
+          {/* Quick Clear Session Button */}
+          {session.drinks.length > 0 && (
+            <button
+              type="button"
+              onClick={resetSession}
+              className="btn btn-sm self-start sm:self-center flex items-center gap-1.5 text-muted hover:text-ink shrink-0"
+              title="Reset current session"
+            >
+              <ArrowCounterClockwise size={13} />
+              Reset Session
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => {
-              if (session.drinks.length === 0 || window.confirm("Start a new session? Today's logged drinks will be cleared.")) {
-                resetSession();
-                setOffset(0);
-              }
-            }}
-          >
-            <ArrowClockwise size={12} /> New session
-          </button>
+
+        {/* METRICS ROW */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-5 border-t border-[var(--color-line)]">
+          <div className="stat">
+            <span className="text-[11px] font-medium text-muted uppercase tracking-wider">Current BAC</span>
+            <div className="metric text-[26px] sm:text-[30px] font-mono text-ink mt-1">
+              {bacDisplay(summary.currentBac)}
+              <span className="text-[12px] font-normal text-muted ml-1">%</span>
+            </div>
+            <span className="text-[11px] text-faint">blood alcohol</span>
+          </div>
+
+          <div className="stat">
+            <span className="text-[11px] font-medium text-muted uppercase tracking-wider">Projected Peak</span>
+            <div className="metric text-[26px] sm:text-[30px] font-mono text-ink mt-1">
+              {bacDisplay(summary.peakBac)}
+              <span className="text-[12px] font-normal text-muted ml-1">%</span>
+            </div>
+            <span className="text-[11px] text-faint">
+              {summary.peakBacAt ? `at ${formatTime(summary.peakBacAt)}` : "no active peak"}
+            </span>
+          </div>
+
+          <div className="stat">
+            <span className="text-[11px] font-medium text-muted uppercase tracking-wider">Sober In</span>
+            <div className="metric text-[26px] sm:text-[30px] font-mono text-ink mt-1">
+              {summary.minutesToClearance && summary.minutesToClearance > 0
+                ? `${Math.floor(summary.minutesToClearance / 60)}h ${summary.minutesToClearance % 60}m`
+                : "0m"}
+            </div>
+            <span className="text-[11px] text-faint">
+              {summary.clearanceAt ? `clear by ${formatTime(summary.clearanceAt)}` : "currently clear"}
+            </span>
+          </div>
+
+          <div className="stat">
+            <span className="text-[11px] font-medium text-muted uppercase tracking-wider">Total Consumed</span>
+            <div className="metric text-[26px] sm:text-[30px] font-mono text-ink mt-1">
+              {summary.standardDrinks.toFixed(1)}
+              <span className="text-[12px] font-normal text-muted ml-1">drinks</span>
+            </div>
+            <span className="text-[11px] text-faint">{grams(summary.totalEthanolG)} pure ethanol</span>
+          </div>
         </div>
       </div>
 
-      <div className="session-grid">
-        <div className="flex min-w-0 flex-col gap-4">
-          <section className="instrument p-4 md:p-5">
-            <div className="grid gap-6 md:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`dot ${offset === 0 ? "dot-live" : ""}`} style={offset !== 0 ? { background: "var(--color-warn)" } : undefined} />
-                  <span className="label text-[10px] text-muted">
-                    {offset === 0 ? "Blood alcohol · live model" : `Projection · ${formatTime(at)}`}
-                  </span>
-                  {offset !== 0 && <Badge tone="warn">+{offset} min</Badge>}
-                </div>
-                <div className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <span className={`hero-bac metric ${riskTone(summary.riskBand)}`} style={{ color: summary.riskBand === "none" ? "var(--color-ink)" : undefined }}>
-                    {bacDisplay(summary.currentBac)}
-                  </span>
-                  <span className="label text-[10px]">g/dL</span>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
-                  <span className="metric text-[11px] text-faint">
-                    {bacUnits(summary.currentBac).mmolL.toFixed(1)} mmol/L · {bacUnits(summary.currentBac).permille.toFixed(2)} ‰
-                  </span>
-                  <Badge tone={summary.riskBand === "none" ? "neutral" : summary.riskBand === "low" ? "safe" : summary.riskBand === "moderate" ? "warn" : "danger"}>
-                    {RISK_LABEL[summary.riskBand]} load
-                  </Badge>
-                </div>
-                <p className="mt-3 max-w-[46ch] text-[12px] leading-relaxed text-muted">
-                  {RISK_EXPLANATION[summary.riskBand]}
-                </p>
-                <div className="mt-3 inline-flex items-center gap-2 border border-[var(--color-line)] px-2.5 py-1.5">
-                  <span className="label text-[8.5px]">90% model range</span>
-                  <span className="metric text-[11px] text-ink">
-                    {bacDisplay(summary.confidence.bacLow)} – {bacDisplay(summary.confidence.bacHigh)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-px bg-[var(--color-line)]">
-                <div className="bg-[var(--color-surface)] p-3">
-                  <div className="label">Peak</div>
-                  <div className="metric mt-1 text-[20px] leading-none">{bacDisplay(summary.peakBac)}</div>
-                  <div className="micro mt-1">{summary.peakBac > 0 ? formatTime(summary.peakBacAt) : "—"}</div>
-                </div>
-                <div className="bg-[var(--color-surface)] p-3">
-                  <div className="label">Zero in</div>
-                  <div className="metric mt-1 text-[20px] leading-none">{formatDuration(summary.minutesToClearance)}</div>
-                  <div className="micro mt-1">{summary.clearanceAt ? formatTime(summary.clearanceAt) : "No active dose"}</div>
-                </div>
-                <div className="bg-[var(--color-surface)] p-3">
-                  <div className="label">Ethanol</div>
-                  <div className="metric mt-1 text-[20px] leading-none">{summary.totalEthanolG.toFixed(0)}<span className="ml-1 text-[11px] text-faint">g</span></div>
-                  <div className="micro mt-1">{summary.standardDrinks.toFixed(1)} US drinks</div>
-                </div>
-                <div className="bg-[var(--color-surface)] p-3">
-                  <div className="label">Acetaldehyde</div>
-                  <div className="metric mt-1 text-[20px] leading-none">{summary.currentAcetaldehydeUmolL.toFixed(1)}</div>
-                  <div className="micro mt-1">µmol/L · peak {summary.acetaldehydePeak.toFixed(1)}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-5 flex items-start gap-3 border-l-2 border-[var(--color-accent)] bg-[rgba(195,242,90,0.035)] px-3.5 py-3">
-              <WarningCircle size={15} weight="fill" className="mt-0.5 shrink-0 text-[var(--color-accent)]" />
-              <div>
-                <div className="text-[12px] font-medium text-ink">{action.title}</div>
-                <p className="mt-0.5 max-w-[76ch] text-[11.5px] leading-relaxed text-muted">{action.body}</p>
-                {action.secondary && <p className="micro mt-1">{action.secondary}</p>}
-              </div>
-            </div>
-          </section>
-
-          <Panel
-            title="Blood alcohol projection"
-            subtitle="Solid line: modelled history. Dashed: projected clearance. Shaded: 90% uncertainty from body water and absorption."
-            right={<TimeScrubber offset={offset} setOffset={setOffset} at={at} />}
-            bodyClassName="px-3 pb-3 pt-2"
-          >
-            <BacChart result={result} session={session} at={at} />
-            <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-[var(--color-line)] px-1 pt-3">
-              <Legend color="var(--color-accent)" label="Drink" shape="tri" />
-              <Legend color="var(--color-warn)" label="Meal" />
-              <Legend color="var(--color-faint)" label="Water" />
-              <span className="ml-auto micro">Hover the curve to inspect any minute.</span>
-            </div>
-            <p className="micro mt-2 px-1">
-              Legal limits are shown for context only. Impairment begins below 0.05 g/dL, and
-              no model can certify you to drive.
-            </p>
-          </Panel>
-
-          <div className="two-col">
-            <Panel
-              title="Acetaldehyde exposure"
-              subtitle={`ALDH2 ${profile.genetics.aldh2 === "reduced" ? "*1/*2 · reduced clearance" : profile.genetics.aldh2 === "minimal" ? "*2/*2 · minimal clearance" : "*1/*1 · full clearance"}`}
-              right={<Badge tone={summary.acetaldehydePeak > 20 ? "danger" : summary.acetaldehydePeak > 9 ? "warn" : "safe"}>{summary.acetaldehydePeak.toFixed(1)} µM peak</Badge>}
-              bodyClassName="px-2 pb-2 pt-2"
-            >
-              <AcetaldehydeChart samples={result.samples} at={at} height={150} />
-              <div className="border-t border-[var(--color-line)] px-2 pt-3">
-                <p className="micro leading-relaxed">
-                  {profile.genetics.aldh2 === "reduced" || profile.genetics.aldh2 === "minimal"
-                    ? `Your ALDH2 capacity is modelled at ${(ALDH2_CAPACITY[profile.genetics.aldh2] * 100).toFixed(0)}% of normal, so acetaldehyde stays elevated roughly ${(1 / ALDH2_CAPACITY[profile.genetics.aldh2]).toFixed(1)}× longer. Flushing and tachycardia are direct signals of that exposure, not a sign to push through.`
-                    : "With full ALDH2 activity, acetaldehyde peaks briefly and falls as ethanol is oxidised. It is still a Group 1 carcinogen, and repeated high peaks matter over years."}
-                </p>
-              </div>
-            </Panel>
-
-            <Panel
-              title="Physiological load"
-              subtitle="Estimated from current BAC, acetaldehyde and your baseline."
-              bodyClassName="panel-body space-y-5"
-            >
-              <MiniMeter
-                label="Cardiovascular strain"
-                value={`+${summary.cardiovascularPeakHrDelta} bpm`}
-                pct={(summary.cardiovascularPeakHrDelta / 30) * 100}
-                tone={summary.cardiovascularPeakHrDelta > 18 ? "danger" : summary.cardiovascularPeakHrDelta > 9 ? "warn" : "safe"}
-                caption={`Predicted HRV suppression ${pct(summary.predictedHrvDropPct)} vs baseline ${profile.baseline.hrvMs} ms`}
-              />
-              <MiniMeter
-                label="Hypoglycaemia risk"
-                value={pct(summary.hypoglycemiaPeak)}
-                pct={summary.hypoglycemiaPeak}
-                tone={summary.hypoglycemiaPeak > 60 ? "danger" : summary.hypoglycemiaPeak > 30 ? "warn" : "safe"}
-                caption={
-                  profile.conditions.diabetes !== "none" || profile.medications.some((m) => m === "insulin" || m === "sulfonylurea")
-                    ? "Glucose-lowering medication or diabetes raises overnight risk. Eat and monitor."
-                    : "Hepatic glucose release is suppressed while ethanol is being oxidised."
-                }
-              />
-              <MiniMeter
-                label="Sleep architecture"
-                value={`−${summary.estimatedRemSuppressionPct}% REM`}
-                pct={(summary.estimatedRemSuppressionPct / 80) * 100}
-                tone={summary.estimatedRemSuppressionPct > 35 ? "danger" : summary.estimatedRemSuppressionPct > 18 ? "warn" : "safe"}
-                caption={`Sleeping at this BAC is projected to cost ${Math.abs(summary.predictedSleepHrDelta).toFixed(1)} h of restorative sleep.`}
-              />
-            </Panel>
+      {/* 2. TIME-STAMPED LOGGING CONTROLS */}
+      <div className="panel p-5 sm:p-6 shadow-md">
+        {/* TIME STAMP SELECTOR BAR */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[var(--color-line)]">
+          <div className="flex items-center gap-2 text-ink font-medium text-[14px]">
+            <Clock size={18} className="text-[var(--color-accent)]" />
+            <span>When did you have this?</span>
           </div>
 
-          <Telemetry
-            result={result}
-            at={at}
-            addSensor={addSensor}
-            profileName={profile.name}
-            lastDrinkAt={lastDrink?.at ?? null}
-          />
+          {/* Quick Time Offsets */}
+          <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+            {[
+              { label: "Just now", offset: 0 },
+              { label: "15m ago", offset: 15 },
+              { label: "30m ago", offset: 30 },
+              { label: "45m ago", offset: 45 },
+              { label: "1h ago", offset: 60 },
+              { label: "2h ago", offset: 120 },
+            ].map((chip) => (
+              <button
+                key={chip.offset}
+                type="button"
+                onClick={() => {
+                  setTimeOffsetMinutes(chip.offset);
+                  setUseCustomTime(false);
+                }}
+                className={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-all ${
+                  !useCustomTime && timeOffsetMinutes === chip.offset
+                    ? "bg-[var(--color-accent)] text-black font-semibold shadow-sm"
+                    : "border border-[var(--color-line)] text-muted hover:text-ink hover:border-[var(--color-line-strong)]"
+                }`}
+              >
+                {chip.label}
+              </button>
+            ))}
+
+            <button
+              type="button"
+              onClick={() => setUseCustomTime(true)}
+              className={`px-2.5 py-1 rounded-md text-[12px] font-medium transition-all ${
+                useCustomTime
+                  ? "bg-[var(--color-accent)] text-black font-semibold shadow-sm"
+                  : "border border-[var(--color-line)] text-muted hover:text-ink"
+              }`}
+            >
+              Specific Time
+            </button>
+          </div>
+
+          {useCustomTime && (
+            <div className="w-full sm:w-auto flex items-center gap-2 mt-2 sm:mt-0">
+              <span className="text-[12px] text-muted">Select time:</span>
+              <input
+                type="time"
+                value={customTime}
+                onChange={(e) => setCustomTime(e.target.value)}
+                className="input py-1 px-2 text-[13px] font-mono"
+              />
+            </div>
+          )}
         </div>
 
-        <aside className="flex min-w-0 flex-col gap-4">
-          <Panel
-            title="Metabolic headroom"
-            subtitle="Personal reference, recalculated from your profile"
-            right={<Badge tone={summary.headroom.remainingG <= 0 ? "danger" : summary.headroom.usedPct > 70 ? "warn" : "safe"}>{summary.headroom.remainingG <= 0 ? "Exceeded" : `${summary.headroom.remainingG.toFixed(0)} g left`}</Badge>}
-            bodyClassName="panel-body pt-3"
+        {/* LOG SELECTOR TABS: DRINK / FOOD / WATER */}
+        <div className="flex items-center gap-2 pt-4 mb-4">
+          <button
+            type="button"
+            onClick={() => setActiveTab("drink")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-medium transition-all ${
+              activeTab === "drink"
+                ? "bg-[rgba(195,242,90,0.15)] text-[var(--color-accent)] border border-[rgba(195,242,90,0.3)]"
+                : "text-muted hover:text-ink"
+            }`}
           >
-            <HeadroomGauge headroom={summary.headroom} />
-            <div className="mt-4 space-y-0">
-              <div className="row row-tight">
-                <span className="text-[11px] text-muted">Population reference</span>
-                <span className="metric ml-auto text-[11px]">{summary.headroom.referenceG} g</span>
-              </div>
-              <div className="row row-tight">
-                <span className="text-[11px] text-muted">Personalised</span>
-                <span className="metric ml-auto text-[11px] text-ink">{summary.headroom.ceilingG} g</span>
-              </div>
-              <div className="row row-tight">
-                <span className="text-[11px] text-muted">Logged today</span>
-                <span className="metric ml-auto text-[11px]">{summary.headroom.consumedG.toFixed(0)} g</span>
-              </div>
-            </div>
-            {summary.headroom.drivers.length > 0 && (
-              <div className="mt-3 space-y-2 border-t border-[var(--color-line)] pt-3">
-                <div className="label">Largest modifiers</div>
-                {summary.headroom.drivers.slice(0, 4).map((d) => (
-                  <div key={d.label + d.effect} className="flex items-start gap-2">
-                    <span className="metric mt-[1px] w-9 shrink-0 text-[10px] text-faint">×{d.multiplier.toFixed(2)}</span>
-                    <div className="min-w-0">
-                      <div className="text-[10.5px] text-ink">{d.label}</div>
-                      <div className="micro">{d.effect}</div>
+            <BeerStein size={16} /> Log Drink
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("food")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-medium transition-all ${
+              activeTab === "food"
+                ? "bg-[rgba(240,180,85,0.15)] text-[var(--color-warn)] border border-[rgba(240,180,85,0.3)]"
+                : "text-muted hover:text-ink"
+            }`}
+          >
+            <ForkKnife size={16} /> Log Food
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("water")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-medium transition-all ${
+              activeTab === "water"
+                ? "bg-[rgba(100,180,255,0.15)] text-sky-400 border border-[rgba(100,180,255,0.3)]"
+                : "text-muted hover:text-ink"
+            }`}
+          >
+            <Drop size={16} /> Log Water
+          </button>
+        </div>
+
+        {/* TAB CONTENT: DRINK */}
+        {activeTab === "drink" && (
+          <div className="space-y-4">
+            {/* Quick 1-Tap Drink Presets */}
+            <div>
+              <span className="text-[11px] font-medium text-muted uppercase tracking-wider block mb-2">
+                Quick Presets (1-Tap)
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                {DRINK_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handleLogPresetDrink(preset)}
+                    className="flex flex-col items-start p-3 rounded-lg border border-[var(--color-line)] hover:border-[var(--color-accent)] hover:bg-[rgba(195,242,90,0.04)] text-left transition-all group"
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-[13px] font-medium text-ink group-hover:text-[var(--color-accent)]">
+                        {preset.label}
+                      </span>
+                      <Plus size={13} className="text-muted group-hover:text-[var(--color-accent)]" />
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Panel>
-
-          <AddDrink onAdd={addDrink} />
-
-          <Panel title="Context" subtitle="Food and fluid change absorption and volume of distribution" bodyClassName="panel-body pt-3">
-            <MealComposer onAdd={addMeal} meals={session.meals} onRemove={removeMeal} />
-            <div className="mt-4 border-t border-[var(--color-line)] pt-3">
-              <div className="flex items-center justify-between">
-                <div className="label">Water</div>
-                <span className="micro">{current.hydration.toFixed(0)}% hydration</span>
-              </div>
-              <div className="mt-2 flex gap-2">
-                {QUICK_WATER.map((ml) => (
-                  <button key={ml} type="button" className="btn btn-sm flex-1" onClick={() => addWater(ml)}>
-                    <Drop size={11} /> {ml}
+                    <span className="text-[11px] text-muted mt-1">{preset.detail}</span>
                   </button>
                 ))}
               </div>
             </div>
-          </Panel>
 
-          <Panel
-            title="Tonight's log"
-            subtitle={`${session.drinks.length} ${session.drinks.length === 1 ? "drink" : "drinks"} · ${grams(summary.totalEthanolG)} ethanol`}
-            right={<span className="badge">{summary.standardDrinks.toFixed(1)} std</span>}
-            bodyClassName="panel-body pt-1"
-          >
-            {session.drinks.length === 0 ? (
-              <div className="py-5">
-                <p className="text-[12px] text-muted">No drinks logged.</p>
-                <p className="micro mt-1">The clock starts with your first entry. Measure the pour when you can.</p>
-              </div>
-            ) : (
-              <div>
-                {[...session.drinks].reverse().map((d) => {
-                  const g = (d.volumeMl * d.abv * 0.789) / 100;
-                  return (
-                    <div key={d.id} className="row row-tight group">
-                      <span className="metric w-10 shrink-0 text-[10px] text-faint">{formatTime(d.at)}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[11.5px] text-ink">{d.label}</div>
-                        <div className="micro">{d.volumeMl} ml · {d.abv}% · {g.toFixed(1)} g</div>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-icon opacity-60 group-hover:opacity-100"
-                        aria-label={`Remove ${d.label}`}
-                        onClick={() => removeDrink(d.id)}
-                      >
-                        <Trash size={13} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </Panel>
-        </aside>
-      </div>
-    </div>
-  );
-}
-
-function Legend({ color, label, shape }: { color: string; label: string; shape?: "tri" }) {
-  return (
-    <span className="flex items-center gap-1.5 text-[10px] text-muted">
-      {shape === "tri" ? (
-        <span style={{ width: 0, height: 0, borderLeft: "4px solid transparent", borderRight: "4px solid transparent", borderTop: `6px solid ${color}` }} />
-      ) : (
-        <span style={{ width: 6, height: 6, background: color }} />
-      )}
-      {label}
-    </span>
-  );
-}
-
-function TimeScrubber({
-  offset,
-  setOffset,
-  at,
-}: {
-  offset: number;
-  setOffset: (n: number) => void;
-  at: number;
-}) {
-  return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="flex items-center gap-2">
-        <span className="label text-[8px]">{offset === 0 ? "LIVE" : formatTime(at)}</span>
-        <button type="button" className="btn btn-sm" onClick={() => setOffset(0)} disabled={offset === 0}>
-          Now
-        </button>
-      </div>
-      <input
-        className="range w-[132px]"
-        type="range"
-        min={-120}
-        max={240}
-        step={5}
-        value={offset}
-        onChange={(e) => setOffset(Number(e.target.value))}
-        aria-label="Project the model forward or back in time"
-      />
-      <div className="flex w-[132px] justify-between text-[8px] text-faint">
-        <span>−2h</span>
-        <span>+4h</span>
-      </div>
-    </div>
-  );
-}
-
-function AddDrink({ onAdd }: { onAdd: (d: Omit<Drink, "id" | "at">) => void }) {
-  const [custom, setCustom] = useState(false);
-  const [volume, setVolume] = useState<number | "">(330);
-  const [abv, setAbv] = useState<number | "">(5);
-  const [label, setLabel] = useState("Custom drink");
-  const [justAdded, setJustAdded] = useState<string | null>(null);
-
-  function add(preset: DrinkPreset) {
-    onAdd({ volumeMl: preset.volumeMl, abv: preset.abv, label: `${preset.label}, ${preset.volumeMl} ml`, carbonated: preset.carbonated });
-    setJustAdded(preset.id);
-    window.setTimeout(() => setJustAdded(null), 900);
-  }
-
-  return (
-    <Panel
-      title="Add a drink"
-      subtitle="Measured pour, not a guess"
-      bodyClassName="panel-body pt-3"
-    >
-      <div className="grid grid-cols-2 gap-2">
-        {DRINK_PRESETS.map((preset) => {
-          const Icon = KIND_ICON[preset.kind];
-          return (
-            <button
-              key={preset.id}
-              type="button"
-              onClick={() => add(preset)}
-              className="group relative flex items-start gap-2 border border-[var(--color-line)] p-2.5 text-left transition-colors hover:border-[var(--color-accent-dim)] hover:bg-[rgba(195,242,90,0.04)] active:translate-y-px"
-            >
-              <Icon size={17} className="mt-0.5 shrink-0 text-[var(--color-faint)] group-hover:text-[var(--color-accent)]" />
-              <span className="min-w-0">
-                <span className="block text-[11.5px] text-ink">{justAdded === preset.id ? "Logged" : preset.label}</span>
-                <span className="micro block">{preset.detail}</span>
+            {/* Brand Search Bar from 75-item Database */}
+            <div className="pt-2">
+              <span className="text-[11px] font-medium text-muted uppercase tracking-wider block mb-2">
+                Or Search Curated Brands & Expressions (75 Products)
               </span>
-            </button>
-          );
-        })}
-      </div>
-
-      <button type="button" className="btn btn-ghost mt-2 w-full justify-between px-1" onClick={() => setCustom((v) => !v)} aria-expanded={custom}>
-        <span className="flex items-center gap-1.5 text-[11px]"><Plus size={11} /> Custom pour</span>
-        <CaretDown size={11} className={custom ? "rotate-180 transition-transform" : "transition-transform"} />
-      </button>
-
-      {custom && (
-        <div className="mt-2 space-y-2 border-t border-[var(--color-line)] pt-3">
-          <div className="grid grid-cols-2 gap-2">
-            <NumberInput label="Volume" unit="ml" value={volume} min={1} max={3000} onChange={setVolume} />
-            <NumberInput label="ABV" unit="%" value={abv} min={0} max={96} step={0.1} onChange={setAbv} />
-          </div>
-          <label className="field">
-            <span>Label</span>
-            <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={60} />
-          </label>
-          <button
-            type="button"
-            className="btn btn-primary w-full"
-            disabled={!volume || !abv}
-            onClick={() => {
-              if (!volume || !abv) return;
-              onAdd({ volumeMl: volume, abv, label: label || "Custom drink" });
-              setCustom(false);
-            }}
-          >
-            Log {volume} ml at {abv}%
-          </button>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-function MealComposer({
-  onAdd,
-  meals,
-  onRemove,
-}: {
-  onAdd: (m: { size: "snack" | "meal" | "large"; fat: "low" | "medium" | "high"; protein: "low" | "medium" | "high" }) => void;
-  meals: { id: string; at: number; size: string; fat: string; protein: string }[];
-  onRemove: (id: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [size, setSize] = useState<"snack" | "meal" | "large">("meal");
-  const [fat, setFat] = useState<"low" | "medium" | "high">("medium");
-  const [protein, setProtein] = useState<"low" | "medium" | "high">("medium");
-
-  return (
-    <div>
-      <div className="flex items-center justify-between">
-        <div className="label flex items-center gap-1.5"><ForkKnife size={11} /> Food</div>
-        <button type="button" className="btn btn-sm" onClick={() => setOpen((v) => !v)}>
-          <Plus size={11} /> Log meal
-        </button>
-      </div>
-
-      {open && (
-        <div className="mt-3 space-y-2.5 border border-[var(--color-line)] p-2.5">
-          <div className="field">
-            <span>Size</span>
-            <div className="seg w-full">
-              {(["snack", "meal", "large"] as const).map((s) => (
-                <button key={s} type="button" data-on={size === s} onClick={() => setSize(s)} className="flex-1">
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="field">
-            <span>Fat</span>
-            <div className="seg w-full">
-              {(["low", "medium", "high"] as const).map((s) => (
-                <button key={s} type="button" data-on={fat === s} onClick={() => setFat(s)} className="flex-1">
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="field">
-            <span>Protein</span>
-            <div className="seg w-full">
-              {(["low", "medium", "high"] as const).map((s) => (
-                <button key={s} type="button" data-on={protein === s} onClick={() => setProtein(s)} className="flex-1">
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-          <button
-            type="button"
-            className="btn btn-primary w-full"
-            onClick={() => {
-              onAdd({ size, fat, protein });
-              setOpen(false);
-            }}
-          >
-            Log meal
-          </button>
-        </div>
-      )}
-
-      {meals.length > 0 ? (
-        <div className="mt-2">
-          {[...meals].reverse().slice(0, 3).map((m) => (
-            <div key={m.id} className="row row-tight">
-              <span className="metric w-10 shrink-0 text-[10px] text-faint">{formatTime(m.at)}</span>
-              <div className="min-w-0 flex-1">
-                <div className="text-[11px] capitalize text-ink">{m.size} · {m.fat} fat · {m.protein} protein</div>
+              <div className="relative">
+                <MagnifyingGlass size={16} className="absolute left-3.5 top-3 text-muted" />
+                <input
+                  type="text"
+                  placeholder="Search brand (e.g. Guinness, Absolut, Heineken, Tito's, Casamigos, Baileys)..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="input pl-10 w-full text-[13px]"
+                />
               </div>
-              <button type="button" className="btn btn-ghost btn-icon" aria-label="Remove meal" onClick={() => onRemove(m.id)}>
-                <Trash size={12} />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="micro mt-2">No meal logged. Fasted absorption peaks faster and higher.</p>
-      )}
-    </div>
-  );
-}
 
-function Telemetry({
-  result,
-  at,
-  addSensor,
-  profileName,
-  lastDrinkAt,
-}: {
-  result: SimulationResult;
-  at: number;
-  addSensor: (s: { heartRate?: number; hrvMs?: number; glucoseMgDl?: number }) => void;
-  profileName: string;
-  lastDrinkAt: number | null;
-}) {
-  const { state, addReading } = useStore();
-  const [open, setOpen] = useState(false);
-  const [hr, setHr] = useState<number | "">("");
-  const [hrv, setHrv] = useState<number | "">("");
-  const [glucose, setGlucose] = useState<number | "">("");
-  const [bacInput, setBacInput] = useState<number | "">("");
-  const sensors = [...state.session.sensors].sort((a, b) => b.at - a.at);
-  const latest = sensors[0];
-  const latestReading = [...state.session.readings].sort((a, b) => b.at - a.at)[0];
-  const sample = sampleAt(result.samples, at);
-
-  return (
-    <section className="panel">
-      <button
-        type="button"
-        className="panel-head w-full text-left"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-      >
-        <div>
-          <h2 className="panel-title">Telemetry &amp; measured checks</h2>
-          <p className="panel-sub">Wearable values are optional. They calibrate the model, they do not replace it.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {latest && <Badge tone="accent">{sensors.length} readings</Badge>}
-          <CaretDown size={14} className={open ? "rotate-180 transition-transform" : "transition-transform"} />
-        </div>
-      </button>
-
-      {open && (
-        <div className="panel-body">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <div className="label mb-2">Log a measurement</div>
-              <div className="grid grid-cols-3 gap-2">
-                <NumberInput label="HR" unit="bpm" value={hr} onChange={setHr} min={30} max={220} />
-                <NumberInput label="HRV" unit="ms" value={hrv} onChange={setHrv} min={1} max={300} />
-                <NumberInput label="Glucose" unit="mg/dL" value={glucose} onChange={setGlucose} min={20} max={600} />
-              </div>
-              <button
-                type="button"
-                className="btn btn-sm mt-2 w-full"
-                disabled={!hr && !hrv && !glucose}
-                onClick={() => {
-                  addSensor({
-                    heartRate: hr === "" ? undefined : hr,
-                    hrvMs: hrv === "" ? undefined : hrv,
-                    glucoseMgDl: glucose === "" ? undefined : glucose,
-                  });
-                  setHr("");
-                  setHrv("");
-                  setGlucose("");
-                }}
-              >
-                <Plus size={11} /> Save reading
-              </button>
-              <p className="micro mt-2">
-                A single spot reading is noisy. Trend against your own baseline ({profileName || "profile"} · {state.profile.baseline.hrvMs} ms HRV).
-              </p>
-            </div>
-
-            <div>
-              <div className="label mb-2">Latest comparison</div>
-              {latest ? (
-                <div className="space-y-1.5">
-                  <CompareRow label="Heart rate" measured={latest.heartRate != null ? `${latest.heartRate} bpm` : null} modelled={sample ? `+${sample.heartRateDelta.toFixed(0)} bpm` : "—"} time={formatTime(latest.at)} />
-                  <CompareRow label="HRV" measured={latest.hrvMs != null ? `${latest.hrvMs} ms` : null} modelled={sample ? `−${sample.hrvSuppressionPct.toFixed(0)}%` : "—"} time={formatTime(latest.at)} />
-                  <CompareRow label="Glucose" measured={latest.glucoseMgDl != null ? `${latest.glucoseMgDl} mg/dL` : null} modelled={sample ? `${sample.hypoglycemiaRisk.toFixed(0)}% risk` : "—"} time={formatTime(latest.at)} />
+              {/* Search results dropdown */}
+              {searchResults.length > 0 && (
+                <div className="mt-2 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] divide-y divide-[var(--color-line)] max-h-60 overflow-y-auto shadow-xl">
+                  {searchResults.map((bev) => (
+                    <button
+                      key={`${bev["Brand Name"]}-${bev["Specific Product / Expression"]}`}
+                      type="button"
+                      onClick={() => handleLogDatabaseDrink(bev)}
+                      className="w-full p-2.5 flex items-center justify-between text-left hover:bg-[rgba(195,242,90,0.06)] transition-all group"
+                    >
+                      <div>
+                        <div className="text-[13px] font-medium text-ink group-hover:text-[var(--color-accent)]">
+                          {bev["Brand Name"]} · {bev["Specific Product / Expression"]}
+                        </div>
+                        <div className="text-[11px] text-muted flex items-center gap-2 mt-0.5">
+                          <span>{bev["Sub-Type"]}</span>
+                          <span>·</span>
+                          <span className="font-mono">{bev["Standard ABV (%)"]}% ABV</span>
+                          <span>·</span>
+                          <span>{bev["Standard Serving Size (ml)"]} ml</span>
+                          <span>·</span>
+                          <span className={`px-1.5 py-0.2 rounded text-[10px] ${
+                            bev.Congener_Level_3_Tier === "Low"
+                              ? "bg-emerald-500/10 text-emerald-400"
+                              : bev.Congener_Level_3_Tier === "Medium"
+                                ? "bg-amber-500/10 text-amber-400"
+                                : "bg-rose-500/10 text-rose-400"
+                          }`}>
+                            {bev.Congener_Level_3_Tier} Congeners
+                          </span>
+                        </div>
+                      </div>
+                      <Plus size={16} className="text-muted group-hover:text-[var(--color-accent)] mr-2 shrink-0" />
+                    </button>
+                  ))}
                 </div>
+              )}
+            </div>
+
+            {/* Custom Drink Toggle */}
+            <div className="pt-2">
+              {!showCustomDrink ? (
+                <button
+                  type="button"
+                  onClick={() => setShowCustomDrink(true)}
+                  className="text-[12px] text-muted hover:text-ink underline underline-offset-4"
+                >
+                  + Log custom volume & ABV
+                </button>
               ) : (
-                <p className="micro">
-                  No readings yet. Add one from a smartwatch or CGM to compare measured strain
-                  against the modelled strain. Simulated data is never inserted on your behalf.
-                </p>
-              )}
-              {latestReading && (
-                <div className="mt-3 border-t border-[var(--color-line)] pt-2">
-                  <div className="label mb-1">Breathalyser check</div>
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="text-muted">{latestReading.source} · {formatTime(latestReading.at)}</span>
-                    <span className="metric text-ink">{bacDisplay(latestReading.bac)}</span>
+                <div className="p-4 rounded-lg border border-[var(--color-line)] bg-[rgba(255,255,255,0.02)] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12px] font-medium text-ink">Custom Drink</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomDrink(false)}
+                      className="text-[11px] text-muted hover:text-ink"
+                    >
+                      Close
+                    </button>
                   </div>
-                  <div className="micro mt-1">
-                    Model at that moment: {bacDisplay(sampleAt(result.samples, latestReading.at)?.bac ?? 0)} g/dL
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <input
+                      type="text"
+                      placeholder="Drink name (e.g. Craft Double IPA)"
+                      value={customName}
+                      onChange={(e) => setCustomName(e.target.value)}
+                      className="input text-[13px]"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        placeholder="Volume"
+                        value={customVolume}
+                        onChange={(e) => setCustomVolume(Number(e.target.value))}
+                        className="input text-[13px] font-mono w-full"
+                      />
+                      <span className="text-[12px] text-muted">ml</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        step="0.1"
+                        placeholder="ABV %"
+                        value={customAbv}
+                        onChange={(e) => setCustomAbv(Number(e.target.value))}
+                        className="input text-[13px] font-mono w-full"
+                      />
+                      <span className="text-[12px] text-muted">%</span>
+                    </div>
                   </div>
-                </div>
-              )}
-              <div className="mt-3 border-t border-[var(--color-line)] pt-3">
-                <div className="label mb-2">Calibrate with a breathalyser</div>
-                <div className="flex items-end gap-2">
-                  <NumberInput
-                    label="Measured BAC"
-                    unit="g/dL"
-                    value={bacInput}
-                    min={0}
-                    max={0.6}
-                    step={0.001}
-                    onChange={setBacInput}
-                    className="flex-1"
-                  />
                   <button
                     type="button"
-                    className="btn btn-sm"
-                    disabled={!bacInput}
-                    onClick={() => {
-                      if (!bacInput) return;
-                      addReading(bacInput, "Breathalyser");
-                      setBacInput("");
-                    }}
+                    onClick={handleLogCustomDrink}
+                    className="btn btn-sm btn-primary"
                   >
-                    Save
+                    Add Custom Drink
                   </button>
                 </div>
-                <p className="micro mt-2">
-                  A reading never changes logged doses. It records how far the model and the
-                  device disagree so you can see the drift.
-                </p>
-              </div>
-              <p className="micro mt-3 flex items-start gap-1.5">
-                <Info size={11} className="mt-0.5 shrink-0" />
-                {lastDrinkAt ? `Last drink logged at ${formatTime(lastDrinkAt)}. Transdermal sensors lag blood concentration.` : "No active session."}
-              </p>
+              )}
             </div>
           </div>
-        </div>
-      )}
-    </section>
-  );
-}
+        )}
 
-function CompareRow({ label, measured, modelled, time }: { label: string; measured: string | null; modelled: string; time: string }) {
-  return (
-    <div className="flex items-center gap-2 border-b border-[var(--color-line)] pb-1.5 last:border-0">
-      <span className="w-[74px] shrink-0 text-[10.5px] text-muted">{label}</span>
-      <span className="metric text-[10.5px] text-ink">{measured ?? "not logged"}</span>
-      <span className="micro ml-auto">model {modelled}</span>
-      <span className="micro w-10 text-right">{time}</span>
+        {/* TAB CONTENT: FOOD */}
+        {activeTab === "food" && (
+          <div className="space-y-3">
+            <span className="text-[11px] font-medium text-muted uppercase tracking-wider block">
+              Choose Food Intake (Buffers Peak BAC & Delays Absorption)
+            </span>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => handleLogMeal("snack", "low", "medium")}
+                className="p-4 rounded-lg border border-[var(--color-line)] hover:border-[var(--color-warn)] hover:bg-[rgba(240,180,85,0.05)] text-left transition-all group"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[14px] font-semibold text-ink group-hover:text-[var(--color-warn)]">
+                    🥪 Light Snack
+                  </span>
+                  <Plus size={14} className="text-muted group-hover:text-[var(--color-warn)]" />
+                </div>
+                <p className="text-[11px] text-muted mt-1 leading-relaxed">
+                  Pretzels, fruit, crackers, or light cheese. Modest slowing of stomach emptying.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleLogMeal("meal", "medium", "medium")}
+                className="p-4 rounded-lg border border-[var(--color-line)] hover:border-[var(--color-warn)] hover:bg-[rgba(240,180,85,0.05)] text-left transition-all group"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[14px] font-semibold text-ink group-hover:text-[var(--color-warn)]">
+                    🍽️ Balanced Meal
+                  </span>
+                  <Plus size={14} className="text-muted group-hover:text-[var(--color-warn)]" />
+                </div>
+                <p className="text-[11px] text-muted mt-1 leading-relaxed">
+                  Full lunch/dinner with protein & complex carbs. Cuts peak BAC by ~20% and delays absorption by 30–45 min.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleLogMeal("large", "high", "high")}
+                className="p-4 rounded-lg border border-[var(--color-line)] hover:border-[var(--color-warn)] hover:bg-[rgba(240,180,85,0.05)] text-left transition-all group"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[14px] font-semibold text-ink group-hover:text-[var(--color-warn)]">
+                    🥩 Heavy / High-Fat Meal
+                  </span>
+                  <Plus size={14} className="text-muted group-hover:text-[var(--color-warn)]" />
+                </div>
+                <p className="text-[11px] text-muted mt-1 leading-relaxed">
+                  Pizza, burger, steak, rich pasta. Maximally retains alcohol in stomach, buffering up to 30% of peak BAC.
+                </p>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* TAB CONTENT: WATER */}
+        {activeTab === "water" && (
+          <div className="space-y-3">
+            <span className="text-[11px] font-medium text-muted uppercase tracking-wider block">
+              Log Water (Hydration & Hangover Mitigation)
+            </span>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => handleLogWater(250)}
+                className="flex items-center gap-2 px-4 py-3 rounded-lg border border-[var(--color-line)] hover:border-sky-400 hover:bg-sky-950/20 text-ink text-[13px] font-medium transition-all"
+              >
+                <Drop size={16} className="text-sky-400" />
+                + Glass of Water (250 ml)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleLogWater(500)}
+                className="flex items-center gap-2 px-4 py-3 rounded-lg border border-[var(--color-line)] hover:border-sky-400 hover:bg-sky-950/20 text-ink text-[13px] font-medium transition-all"
+              >
+                <Drop size={16} className="text-sky-400" />
+                + Bottle of Water (500 ml)
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 3. BLOOD ALCOHOL CURVE */}
+      <div className="panel p-5 sm:p-6 shadow-md">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-[16px] font-semibold text-ink">Projected BAC & Clearance Curve</h2>
+            <p className="text-[12px] text-muted">
+              Pharmacokinetic two-compartment model showing absorption, peak, and liver clearance rate.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-muted">
+            <span className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" /> Low (&lt;0.04)
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400" /> Med (0.04–0.08)
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-400" /> High (&gt;0.08)
+            </span>
+          </div>
+        </div>
+
+        <BacChart result={simulation} session={session} at={now} />
+      </div>
+
+      {/* 3b. OPTIONAL ADVANCED BIOMARKERS & SLEEP IMPACT ACCORDION */}
+      <details className="panel p-5 sm:p-6 shadow-md border border-[var(--color-line)] group">
+        <summary className="cursor-pointer text-[13px] font-medium text-muted hover:text-ink flex items-center justify-between list-none">
+          <span className="flex items-center gap-2">
+            <span>🔬</span>
+            <span>Advanced Biomarkers &amp; Sleep Impact (Acetaldehyde, REM, HRV)</span>
+          </span>
+          <span className="text-[11px] text-[var(--color-accent)] underline underline-offset-4">
+            Click to view / hide
+          </span>
+        </summary>
+
+        <div className="mt-5 pt-4 border-t border-[var(--color-line)] space-y-5">
+          {/* Acetaldehyde curve */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[12px] font-medium text-ink">
+                Acetaldehyde Hepatic Accumulation (Toxic Intermediate)
+              </span>
+              <span className="text-[11px] font-mono text-[var(--color-warn)]">
+                Peak: {summary.acetaldehydePeak?.toFixed(1) ?? "0.0"} µM
+              </span>
+            </div>
+            <p className="text-[11px] text-muted mb-3">
+              Acetaldehyde is the Group 1 carcinogen responsible for facial flushing, nausea, and morning hangover.
+            </p>
+            <AcetaldehydeChart samples={simulation.samples} at={now} height={140} />
+          </div>
+
+          {/* Sleep & recovery meters */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 border-t border-[var(--color-line)]">
+            <MiniMeter
+              label="REM Sleep Suppression"
+              value={`${Math.round(summary.estimatedRemSuppressionPct)}%`}
+              pct={summary.estimatedRemSuppressionPct}
+              tone={summary.estimatedRemSuppressionPct > 30 ? "danger" : summary.estimatedRemSuppressionPct > 15 ? "warn" : "safe"}
+              caption="Reduces neural memory consolidation & dream architecture."
+            />
+            <MiniMeter
+              label="Sleep Heart Rate Rise"
+              value={`+${Math.round(summary.predictedSleepHrDelta)} BPM`}
+              pct={(summary.predictedSleepHrDelta / 20) * 100}
+              tone={summary.predictedSleepHrDelta > 10 ? "danger" : summary.predictedSleepHrDelta > 4 ? "warn" : "safe"}
+              caption="Autonomic sympathetic overdrive during nocturnal sleep."
+            />
+            <MiniMeter
+              label="HRV Overnight Reduction"
+              value={`-${Math.round(summary.predictedHrvDropPct)}%`}
+              pct={summary.predictedHrvDropPct}
+              tone={summary.predictedHrvDropPct > 35 ? "danger" : summary.predictedHrvDropPct > 15 ? "warn" : "safe"}
+              caption="Vagal parasympathetic tone suppression."
+            />
+          </div>
+        </div>
+      </details>
+
+      {/* 4. TODAY'S TIMELINE LOG */}
+      <div className="panel p-5 sm:p-6 shadow-md">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Clock size={18} className="text-[var(--color-accent)]" />
+            <h2 className="text-[16px] font-semibold text-ink">Today's Intake Log</h2>
+          </div>
+          <span className="text-[12px] text-muted">
+            {timelineEvents.length} {timelineEvents.length === 1 ? "entry" : "entries"} logged
+          </span>
+        </div>
+
+        {timelineEvents.length === 0 ? (
+          <div className="py-8 text-center text-muted text-[13px]">
+            No drinks, meals, or water logged for today yet. Use the buttons above to log an entry!
+          </div>
+        ) : (
+          <div className="divide-y divide-[var(--color-line)]">
+            {timelineEvents.map((evt) => (
+              <div key={evt.id} className="py-3 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-[12px] font-mono text-muted w-16">
+                    {formatTime(evt.at)}
+                  </span>
+                  <div>
+                    <div className="text-[13px] font-medium text-ink flex items-center gap-2">
+                      {evt.type === "drink" && <BeerStein size={15} className="text-[var(--color-accent)]" />}
+                      {evt.type === "meal" && <ForkKnife size={15} className="text-[var(--color-warn)]" />}
+                      {evt.type === "water" && <Drop size={15} className="text-sky-400" />}
+                      {evt.title}
+                    </div>
+                    <div className="text-[11px] text-muted mt-0.5">{evt.subtitle}</div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (evt.type === "drink") removeDrink(evt.id);
+                    if (evt.type === "meal") removeMeal(evt.id);
+                  }}
+                  className="text-muted hover:text-rose-400 p-1.5 rounded transition-colors"
+                  title="Remove entry"
+                >
+                  <Trash size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
-}
-
-function nextAction(result: SimulationResult, offset: number): { title: string; body: string; secondary?: string } {
-  const { summary, samples } = result;
-  const current = sampleAt(samples, summary.at);
-  const drinks = result.summary.headroom.consumedG > 0;
-
-  if (offset !== 0) {
-    return {
-      title: `Projected state at ${new Date(summary.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`,
-      body: `Blood alcohol is modelled at ${bacDisplay(summary.currentBac)} g/dL. The projection assumes no further drinks, food or water.`,
-      secondary: "Move the scrubber back to live to log another drink.",
-    };
-  }
-
-  if (!drinks || !current) {
-    return {
-      title: "Start with the measured dose.",
-      body: "Log the first drink before you take it. The model needs volume and ABV, not a category. A 175 ml pour of 13.5% wine is 18.7 g of ethanol.",
-      secondary: "Hydration, food and your ALDH2 status are already loaded from baseline.",
-    };
-  }
-
-  if (current.bac >= 0.15) {
-    return {
-      title: "Stop drinking. This is a high acute load.",
-      body: "At this concentration, coordination, breathing and gag reflex are meaningfully impaired. Stay with someone, lie on your side if sleeping, and do not drive.",
-      secondary: "If breathing slows, consciousness fades, or you cannot be woken, call emergency services.",
-    };
-  }
-
-  if (summary.headroom.remainingG <= 0) {
-    return {
-      title: "You are past your personal reference.",
-      body: `Your load is ${summary.headroom.consumedG.toFixed(0)} g against a ${summary.headroom.ceilingG} g reference. Switch to water for the rest of the session. The reference is not a safety threshold; it is the point where the modelled load stops being trivial for you.`,
-      secondary: `Estimated ${formatDuration(summary.minutesToClearance)} until ethanol clears.`,
-    };
-  }
-
-  const aldh = result.summary.drivers.find((d) => d.label.startsWith("ALDH2"));
-  if (aldh && current.acetaldehydeUmolL >= 9) {
-    return {
-      title: "Acetaldehyde is accumulating.",
-      body: "Your genotype clears this metabolite slowly. Flushing, headache and a racing heart are signs of exposure, not signs of a weak drink. Pause, eat, and switch to water.",
-      secondary: `Modelled acetaldehyde ${current.acetaldehydeUmolL.toFixed(1)} µmol/L.`,
-    };
-  }
-
-  if (summary.at < summary.peakBacAt && current.absorptionGPerH > current.oxidationGPerH) {
-    const minutes = Math.max(5, Math.round((summary.peakBacAt - summary.at) / 60_000));
-    return {
-      title: `Absorption is outpacing clearance. Pause ${minutes} min.`,
-      body: "Another drink now stacks on top of ethanol that has not reached your blood yet. Waiting until the curve turns keeps the peak lower than drinking through it.",
-      secondary: `Current rise: ${current.absorptionGPerH.toFixed(1)} g/h in, ${current.oxidationGPerH.toFixed(1)} g/h out.`,
-    };
-  }
-
-  if (current.hydration < 45) {
-    return {
-      title: "Replace 500 ml of fluid.",
-      body: "Low plasma volume raises the concentration of the same ethanol dose and worsens next-day headache. Water does not speed clearance, but it changes the volume ethanol is diluted into.",
-      secondary: "Add electrolytes if you have been sweating or vomiting.",
-    };
-  }
-
-  if (current.bac < 0.02 && summary.clearanceAt) {
-    return {
-      title: "Your BAC is below the impairment threshold.",
-      body: "Ethanol is largely cleared, but sleep architecture and HRV can stay suppressed for hours. Do not treat a low number as a full recovery.",
-      secondary: `Estimated acetaldehyde ${current.acetaldehydeUmolL.toFixed(1)} µmol/L. Sleep loss: ${summary.estimatedRemSuppressionPct}% REM.`,
-    };
-  }
-
-  return {
-    title: "Hold the current pace.",
-    body: "Clearance is keeping up with absorption. Keep water within reach, eat if you have not, and set a stop time before the next drink.",
-    secondary: `${summary.standardDrinks.toFixed(1)} US standard drinks logged · ${summary.headroom.remainingG.toFixed(0)} g left in the reference.`,
-  };
 }

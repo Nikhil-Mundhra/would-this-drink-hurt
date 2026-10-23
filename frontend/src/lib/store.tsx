@@ -54,7 +54,7 @@ function initialState(): AppState {
     session: emptySession(),
     history: [],
     isDemo: false,
-    onboarded: false,
+    onboarded: true,
   };
 }
 
@@ -72,7 +72,7 @@ function loadState(): AppState {
       session: { ...emptySession(), ...parsed.session },
       history: Array.isArray(parsed.history) ? parsed.history : [],
       isDemo: Boolean(parsed.isDemo),
-      onboarded: Boolean(parsed.onboarded),
+      onboarded: parsed.onboarded !== undefined ? Boolean(parsed.onboarded) : true,
     };
   } catch {
     return initialState();
@@ -85,10 +85,10 @@ interface StoreValue {
   setProfile: (profile: Profile) => void;
   updateProfile: (updater: (p: Profile) => Profile) => void;
   updateSession: (updater: (s: Session) => Session) => void;
-  addDrink: (drink: Omit<Drink, "id" | "at">) => void;
+  addDrink: (drink: Omit<Drink, "id" | "at">, at?: number) => void;
   removeDrink: (id: string) => void;
-  addWater: (volumeMl: number) => void;
-  addMeal: (meal: Omit<Meal, "id" | "at">) => void;
+  addWater: (volumeMl: number, at?: number) => void;
+  addMeal: (meal: Omit<Meal, "id" | "at">, at?: number) => void;
   removeMeal: (id: string) => void;
   addSensor: (sample: Omit<SensorSample, "at">) => void;
   addReading: (bac: number, source: string) => void;
@@ -136,30 +136,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       updateProfile: (updater) =>
         setState((prev) => ({ ...prev, profile: updater(prev.profile) })),
       updateSession,
-      addDrink: (drink) =>
+      addDrink: (drink, timestamp) =>
         updateSession((s) => {
-          const at = Date.now();
+          const at = timestamp ?? Date.now();
           const entry: Drink = { ...drink, id: crypto.randomUUID(), at };
+          const allDrinks = [...s.drinks, entry].sort((a, b) => a.at - b.at);
           return {
             ...s,
-            startedAt: s.drinks.length === 0 ? at : s.startedAt,
-            drinks: [...s.drinks, entry].sort((a, b) => a.at - b.at),
+            startedAt: allDrinks.length > 0 ? Math.min(s.startedAt, allDrinks[0].at) : at,
+            drinks: allDrinks,
           };
         }),
       removeDrink: (id) =>
         updateSession((s) => ({ ...s, drinks: s.drinks.filter((d) => d.id !== id) })),
-      addWater: (volumeMl) =>
+      addWater: (volumeMl, timestamp) =>
         updateSession((s) => ({
           ...s,
           waters: [
             ...s.waters,
-            { id: crypto.randomUUID(), at: Date.now(), volumeMl },
-          ],
+            { id: crypto.randomUUID(), at: timestamp ?? Date.now(), volumeMl },
+          ].sort((a, b) => a.at - b.at),
         })),
-      addMeal: (meal) =>
+      addMeal: (meal, timestamp) =>
         updateSession((s) => ({
           ...s,
-          meals: [...s.meals, { ...meal, id: crypto.randomUUID(), at: Date.now() }],
+          meals: [
+            ...s.meals,
+            { ...meal, id: crypto.randomUUID(), at: timestamp ?? Date.now() },
+          ].sort((a, b) => a.at - b.at),
         })),
       removeMeal: (id) =>
         updateSession((s) => ({ ...s, meals: s.meals.filter((m) => m.id !== id) })),
