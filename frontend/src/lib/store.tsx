@@ -88,6 +88,8 @@ interface StoreValue {
   addDrink: (drink: Omit<Drink, "id" | "at">, at?: number) => void;
   removeDrink: (id: string) => void;
   addWater: (volumeMl: number, at?: number) => void;
+  removeWater: (id: string) => void;
+  clearWater: () => void;
   addMeal: (meal: Omit<Meal, "id" | "at">, at?: number) => void;
   removeMeal: (id: string) => void;
   addSensor: (sample: Omit<SensorSample, "at">) => void;
@@ -157,6 +159,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             { id: crypto.randomUUID(), at: timestamp ?? Date.now(), volumeMl },
           ].sort((a, b) => a.at - b.at),
         })),
+      removeWater: (id) =>
+        updateSession((s) => ({ ...s, waters: s.waters.filter((w) => w.id !== id) })),
+      clearWater: () =>
+        updateSession((s) => ({ ...s, waters: [] })),
       addMeal: (meal, timestamp) =>
         updateSession((s) => ({
           ...s,

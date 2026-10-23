@@ -51,7 +51,7 @@ function loadSearchPresets(): DynamicPreset[] {
 }
 
 export function SessionPage() {
-  const { state, now, addDrink, removeDrink, addMeal, removeMeal, addWater, resetSession } = useStore();
+  const { state, now, addDrink, removeDrink, addMeal, removeMeal, addWater, removeWater, clearWater, resetSession } = useStore();
   const { session } = state;
   const simulation = useSimulation();
   const { summary } = simulation;
@@ -223,6 +223,20 @@ export function SessionPage() {
   }, [session.meals]);
 
   const waterStatus = useMemo(() => {
+    if (totalWaterMl > 4500) {
+      return {
+        label: `⚠️ Excessive Water (${totalWaterMl} ml)`,
+        statusClass: "bg-rose-500/10 text-rose-400 border-rose-500/25",
+        description: "Warning: High volume plain water intake in a short window risks acute dilutional hyponatremia. Slow down fluid intake and replenish electrolytes.",
+      };
+    }
+    if (totalWaterMl >= 2500) {
+      return {
+        label: `High Hydration (${totalWaterMl} ml)`,
+        statusClass: "bg-cyan-500/10 text-cyan-400 border-cyan-500/25",
+        description: "Ample fluid intake. Ensure electrolytes are maintained if consuming high volume over a single session.",
+      };
+    }
     if (totalWaterMl >= 750) {
       return {
         label: `Well Hydrated (${totalWaterMl} ml)`,
@@ -439,7 +453,12 @@ export function SessionPage() {
                   <span className="text-[10px] font-medium text-muted uppercase tracking-wider">Sober In</span>
                   <div className="metric text-[20px] sm:text-[24px] font-mono text-ink mt-0.5">
                     {summary.minutesToClearance && summary.minutesToClearance > 0
-                      ? `${Math.floor(summary.minutesToClearance / 60)}h ${summary.minutesToClearance % 60}m`
+                      ? (() => {
+                          const totalMinutes = Math.round(summary.minutesToClearance);
+                          const h = Math.floor(totalMinutes / 60);
+                          const m = totalMinutes % 60;
+                          return h > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
+                        })()
                       : "0m"}
                   </div>
                   <span className="text-[10px] text-faint">
@@ -469,9 +488,22 @@ export function SessionPage() {
                 <Drop size={14} className="text-sky-400" />
                 Stomach Buffer &amp; Hydration
               </span>
-              <span className="text-[11px] text-faint">
-                {session.meals.length} {session.meals.length === 1 ? "meal" : "meals"} · {totalWaterMl} ml water
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-faint">
+                  {session.meals.length} {session.meals.length === 1 ? "meal" : "meals"} · {totalWaterMl} ml water
+                </span>
+                {totalWaterMl > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearWater}
+                    className="btn btn-sm text-[10px] py-0.5 px-1.5 h-auto text-muted hover:text-rose-400 flex items-center gap-1 border border-[var(--color-line)] rounded"
+                    title="Reset water intake"
+                  >
+                    <ArrowCounterClockwise size={10} />
+                    Reset
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Food Buffer Status */}
@@ -1034,6 +1066,7 @@ export function SessionPage() {
                   onClick={() => {
                     if (evt.type === "drink") removeDrink(evt.id);
                     if (evt.type === "meal") removeMeal(evt.id);
+                    if (evt.type === "water") removeWater(evt.id);
                   }}
                   className="text-muted hover:text-rose-400 p-1.5 rounded transition-colors"
                   title="Remove entry"
