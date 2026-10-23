@@ -14,6 +14,8 @@ import {
   Wine,
   Martini,
   ArrowCounterClockwise,
+  X,
+  ClockCounterClockwise,
 } from "@phosphor-icons/react";
 import { useStore, useNow } from "../lib/store";
 import { useSimulation } from "../lib/useSimulation";
@@ -25,11 +27,77 @@ import { AcetaldehydeChart, MiniMeter } from "../components/charts";
 
 type LogTab = "drink" | "food" | "water";
 
+const SEARCH_PRESETS_KEY = "wtdh.search_presets.v1";
+
+export interface DynamicPreset {
+  id: string;
+  label: string;
+  detail: string;
+  volumeMl: number;
+  abv: number;
+  isRecent?: boolean;
+}
+
+function loadSearchPresets(): DynamicPreset[] {
+  try {
+    const raw = window.localStorage.getItem(SEARCH_PRESETS_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
 export function SessionPage() {
   const { state, now, addDrink, removeDrink, addMeal, removeMeal, addWater, resetSession } = useStore();
   const { session } = state;
   const simulation = useSimulation();
   const { summary } = simulation;
+
+  // Dynamic search history presets
+  const [recentPresets, setRecentPresets] = useState<DynamicPreset[]>(loadSearchPresets);
+
+  const addRecentPreset = (preset: DynamicPreset) => {
+    setRecentPresets((prev) => {
+      const filtered = prev.filter(
+        (p) => !(p.label.toLowerCase() === preset.label.toLowerCase() && p.abv === preset.abv)
+      );
+      const updated = [preset, ...filtered].slice(0, 6);
+      try {
+        window.localStorage.setItem(SEARCH_PRESETS_KEY, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  };
+
+  const clearRecentPresets = () => {
+    setRecentPresets([]);
+    try {
+      window.localStorage.removeItem(SEARCH_PRESETS_KEY);
+    } catch {}
+  };
+
+  // Dynamic 1-tap presets: search history items first, padded with defaults up to 6
+  const displayPresets = useMemo<DynamicPreset[]>(() => {
+    const combined: DynamicPreset[] = [...recentPresets];
+    for (const def of DRINK_PRESETS) {
+      if (combined.length >= 6) break;
+      const exists = combined.some(
+        (c) => c.label.toLowerCase() === def.label.toLowerCase() || (c.volumeMl === def.volumeMl && c.abv === def.abv)
+      );
+      if (!exists) {
+        combined.push({
+          id: def.id,
+          label: def.label,
+          detail: def.detail,
+          volumeMl: def.volumeMl,
+          abv: def.abv,
+          isRecent: false,
+        });
+      }
+    }
+    return combined;
+  }, [recentPresets]);
 
   // Time selector state
   const [timeOffsetMinutes, setTimeOffsetMinutes] = useState<number>(0);
@@ -127,27 +195,35 @@ export function SessionPage() {
   }, [summary.currentBac, summary.peakBac, session.drinks.length]);
 
   // Handlers
-  const handleLogPresetDrink = (preset: DrinkPreset) => {
+  const handleLogDynamicDrink = (preset: DynamicPreset) => {
     addDrink(
       {
         volumeMl: preset.volumeMl,
         abv: preset.abv,
         label: preset.label,
-        carbonated: preset.carbonated,
       },
       selectedTimestamp,
     );
   };
 
   const handleLogDatabaseDrink = (bev: BeverageItem) => {
+    const label = `${bev["Brand Name"]} - ${bev["Specific Product / Expression"]}`;
     addDrink(
       {
         volumeMl: bev["Standard Serving Size (ml)"],
         abv: bev["Standard ABV (%)"],
-        label: `${bev["Brand Name"]} - ${bev["Specific Product / Expression"]}`,
+        label,
       },
       selectedTimestamp,
     );
+    addRecentPreset({
+      id: `rec-${bev["Brand Name"]}-${bev["Specific Product / Expression"]}`,
+      label: bev["Brand Name"],
+      detail: `${bev["Specific Product / Expression"]} · ${bev["Standard Serving Size (ml)"]}ml · ${bev["Standard ABV (%)"]}%`,
+      volumeMl: bev["Standard Serving Size (ml)"],
+      abv: bev["Standard ABV (%)"],
+      isRecent: true,
+    });
     setSearchQuery("");
   };
 
@@ -161,6 +237,14 @@ export function SessionPage() {
       },
       selectedTimestamp,
     );
+    addRecentPreset({
+      id: `rec-custom-${customName.trim()}`,
+      label: customName.trim(),
+      detail: `${customVolume} ml · ${customAbv}%`,
+      volumeMl: customVolume,
+      abv: customAbv,
+      isRecent: true,
+    });
     setShowCustomDrink(false);
     setCustomName("");
   };
@@ -409,26 +493,50 @@ export function SessionPage() {
         {/* TAB CONTENT: DRINK */}
         {activeTab === "drink" && (
           <div className="space-y-4">
-            {/* Quick 1-Tap Drink Presets */}
+            {/* Quick 1-Tap Drink Presets (Dynamic as per search history) */}
             <div>
-              <span className="text-[11px] font-medium text-muted uppercase tracking-wider block mb-2">
-                Quick Presets (1-Tap)
-              </span>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-muted uppercase tracking-wider">
+                    Quick Presets (1-Tap)
+                  </span>
+                  {recentPresets.length > 0 && (
+                    <span className="text-[10px] text-[var(--color-accent)] font-medium flex items-center gap-1">
+                      <ClockCounterClockwise size={11} /> Personal Favorites
+                    </span>
+                  )}
+                </div>
+                {recentPresets.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearRecentPresets}
+                    className="text-[11px] text-muted hover:text-ink underline underline-offset-2 transition-colors"
+                  >
+                    Reset to defaults
+                  </button>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-                {DRINK_PRESETS.map((preset) => (
+                {displayPresets.map((preset) => (
                   <button
                     key={preset.id}
                     type="button"
-                    onClick={() => handleLogPresetDrink(preset)}
-                    className="flex flex-col items-start p-3 rounded-lg border border-[var(--color-line)] hover:border-[var(--color-accent)] hover:bg-[rgba(195,242,90,0.04)] text-left transition-all group"
+                    onClick={() => handleLogDynamicDrink(preset)}
+                    className="flex flex-col items-start p-3 rounded-lg border border-[var(--color-line)] hover:border-[var(--color-accent)] hover:bg-[rgba(195,242,90,0.04)] text-left transition-all group relative"
                   >
                     <div className="flex items-center justify-between w-full">
-                      <span className="text-[13px] font-medium text-ink group-hover:text-[var(--color-accent)]">
+                      <span className="text-[13px] font-medium text-ink group-hover:text-[var(--color-accent)] truncate max-w-[85%]">
                         {preset.label}
                       </span>
-                      <Plus size={13} className="text-muted group-hover:text-[var(--color-accent)]" />
+                      <Plus size={13} className="text-muted group-hover:text-[var(--color-accent)] shrink-0" />
                     </div>
-                    <span className="text-[11px] text-muted mt-1">{preset.detail}</span>
+                    <span className="text-[11px] text-muted mt-1 truncate max-w-full">{preset.detail}</span>
+                    {preset.isRecent && (
+                      <span className="mt-1.5 px-1.5 py-0.5 rounded text-[9px] font-medium bg-[rgba(195,242,90,0.12)] text-[var(--color-accent)] border border-[rgba(195,242,90,0.25)]">
+                        Recent Search
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -439,15 +547,28 @@ export function SessionPage() {
               <span className="text-[11px] font-medium text-muted uppercase tracking-wider block mb-2">
                 Or Search Curated Brands & Expressions (75 Products)
               </span>
-              <div className="relative">
-                <MagnifyingGlass size={16} className="absolute left-3.5 top-3 text-muted" />
+              <div className="relative flex items-center">
+                <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-muted flex items-center z-10">
+                  <MagnifyingGlass size={16} />
+                </div>
                 <input
                   type="text"
                   placeholder="Search brand (e.g. Guinness, Absolut, Heineken, Tito's, Casamigos, Baileys)..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="input pl-10 w-full text-[13px]"
+                  style={{ paddingLeft: "38px", paddingRight: searchQuery ? "36px" : "12px" }}
+                  className="input w-full text-[13px]"
                 />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink p-1"
+                    title="Clear search"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </div>
 
               {/* Search results dropdown */}
