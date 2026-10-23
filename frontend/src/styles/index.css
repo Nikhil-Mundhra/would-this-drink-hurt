@@ -881,7 +881,7 @@ a {
     margin-left: 0;
   }
   .workspace {
-    padding: 16px 16px 96px;
+    padding: 16px 16px 48px;
   }
   .workspace::before {
     left: 0;
@@ -890,31 +890,7 @@ a {
     padding: 0 16px;
   }
   .mobile-nav {
-    display: flex;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    z-index: 40;
-    background: rgba(8, 11, 10, 0.94);
-    backdrop-filter: blur(16px);
-    border-top: 1px solid var(--color-line);
-    padding: 6px 4px max(6px, env(safe-area-inset-bottom));
-  }
-  .mobile-nav a {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 3px;
-    padding: 6px 2px;
-    color: var(--color-faint);
-    font-family: var(--font-mono);
-    font-size: 8.5px;
-    letter-spacing: 0.04em;
-  }
-  .mobile-nav a[data-active="true"] {
-    color: var(--color-accent);
+    display: none !important;
   }
   .onboard {
     grid-template-columns: 1fr;

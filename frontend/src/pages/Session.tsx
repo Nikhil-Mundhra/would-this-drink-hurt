@@ -16,6 +16,8 @@ import {
   ArrowCounterClockwise,
   X,
   ClockCounterClockwise,
+  CaretDown,
+  CaretUp,
 } from "@phosphor-icons/react";
 import { useStore, useNow } from "../lib/store";
 import { useSimulation } from "../lib/useSimulation";
@@ -194,6 +196,54 @@ export function SessionPage() {
     };
   }, [summary.currentBac, summary.peakBac, session.drinks.length]);
 
+  // Progressive disclosure for BAC details
+  const [showBacDetails, setShowBacDetails] = useState<boolean>(false);
+
+  // Water & food buffer stats
+  const totalWaterMl = useMemo(() => {
+    return session.waters.reduce((sum, w) => sum + w.volumeMl, 0);
+  }, [session.waters]);
+
+  const foodStatus = useMemo(() => {
+    const meals = [...session.meals].sort((a, b) => b.at - a.at);
+    if (meals.length === 0) {
+      return {
+        hasFood: false,
+        label: "Empty Stomach",
+        description: "Alcohol absorbs quickly into the duodenum without food. Eating now buffers remaining absorption.",
+      };
+    }
+    const last = meals[0];
+    const sizeName = last.size === "snack" ? "Light Snack" : last.size === "large" ? "Heavy / High-Fat Meal" : "Balanced Meal";
+    return {
+      hasFood: true,
+      label: `${sizeName} Buffered`,
+      description: `Active buffer logged at ${formatTime(last.at)}. Retains ethanol in stomach, delaying peak by 30-45m and reducing peak BAC by ~20%.`,
+    };
+  }, [session.meals]);
+
+  const waterStatus = useMemo(() => {
+    if (totalWaterMl >= 750) {
+      return {
+        label: `Well Hydrated (${totalWaterMl} ml)`,
+        statusClass: "bg-sky-500/10 text-sky-400 border-sky-500/25",
+        description: "Healthy fluid balance. Mitigates vasopressin suppression and morning dehydration headache.",
+      };
+    }
+    if (totalWaterMl >= 250) {
+      return {
+        label: `Moderate (${totalWaterMl} ml)`,
+        statusClass: "bg-blue-500/10 text-blue-400 border-blue-500/25",
+        description: "Good baseline. Aim for 1 glass of water per alcoholic drink to offset diuretic loss.",
+      };
+    }
+    return {
+      label: "0 ml Logged",
+      statusClass: "bg-amber-500/10 text-amber-400 border-amber-500/25",
+      description: "Alcohol suppresses anti-diuretic hormone (ADH). Drink water to protect hydration.",
+    };
+  }, [totalWaterMl]);
+
   // Handlers
   const handleLogDynamicDrink = (preset: DynamicPreset) => {
     addDrink(
@@ -313,80 +363,182 @@ export function SessionPage() {
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-12">
-      {/* 1. PRIMARY RISK BANNER */}
-      <div className={`p-5 sm:p-6 rounded-xl border ${riskInfo.bgBanner} shadow-lg transition-all`}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* 1. TOP HERO AREA: ALCOHOL & RISK WIDGET + FOOD & WATER WIDGET */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* WIDGET 1: ALCOHOL & RISK STATUS (SIMPLE AT FIRST GLANCE) */}
+        <div className={`p-5 rounded-xl border ${riskInfo.bgBanner} shadow-md flex flex-col justify-between transition-all`}>
           <div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-between gap-3">
               <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-semibold border ${riskInfo.badgeClass}`}>
                 <IconRisk size={15} weight="bold" />
                 {riskInfo.label.toUpperCase()}
               </span>
-              <span className="text-[12px] text-muted">Real-Time Risk State</span>
+              {session.drinks.length > 0 && (
+                <button
+                  type="button"
+                  onClick={resetSession}
+                  className="btn btn-sm text-[11px] text-muted hover:text-ink flex items-center gap-1"
+                  title="Reset current session"
+                >
+                  <ArrowCounterClockwise size={12} />
+                  Reset
+                </button>
+              )}
             </div>
-            <h1 className="text-[22px] sm:text-[28px] font-semibold text-ink mt-2 tracking-tight">
+
+            <h1 className="text-[20px] sm:text-[24px] font-semibold text-ink mt-3 tracking-tight">
               {riskInfo.summary}
             </h1>
-            <p className="text-[13px] text-muted mt-1 max-w-2xl leading-relaxed">
+            <p className="text-[12px] text-muted mt-1 leading-relaxed">
               {riskInfo.advice}
             </p>
           </div>
 
-          {/* Quick Clear Session Button */}
-          {session.drinks.length > 0 && (
+          {/* Progressive Disclosure Toggle for BAC / Peak / Sober In */}
+          <div className="mt-4 pt-3 border-t border-[var(--color-line)]">
             <button
               type="button"
-              onClick={resetSession}
-              className="btn btn-sm self-start sm:self-center flex items-center gap-1.5 text-muted hover:text-ink shrink-0"
-              title="Reset current session"
+              onClick={() => setShowBacDetails((prev) => !prev)}
+              className="flex items-center justify-between w-full py-1 text-[12px] font-medium text-muted hover:text-ink transition-colors"
             >
-              <ArrowCounterClockwise size={13} />
-              Reset Session
+              <span className="flex items-center gap-1.5">
+                <span>{showBacDetails ? "Hide BAC & Time Stats" : "Show BAC & Time to Sober"}</span>
+                {session.drinks.length > 0 && !showBacDetails && (
+                  <span className="font-mono text-[11px] text-ink bg-[rgba(255,255,255,0.06)] px-1.5 py-0.5 rounded">
+                    {bacDisplay(summary.currentBac)}% BAC
+                  </span>
+                )}
+              </span>
+              {showBacDetails ? <CaretUp size={14} /> : <CaretDown size={14} />}
             </button>
-          )}
+
+            {/* Hidden until clicked */}
+            {showBacDetails && (
+              <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-[var(--color-line)] animate-in fade-in duration-200">
+                <div className="stat">
+                  <span className="text-[10px] font-medium text-muted uppercase tracking-wider">Current BAC</span>
+                  <div className="metric text-[20px] sm:text-[24px] font-mono text-ink mt-0.5">
+                    {bacDisplay(summary.currentBac)}
+                    <span className="text-[11px] font-normal text-muted ml-1">%</span>
+                  </div>
+                  <span className="text-[10px] text-faint">blood alcohol</span>
+                </div>
+
+                <div className="stat">
+                  <span className="text-[10px] font-medium text-muted uppercase tracking-wider">Projected Peak</span>
+                  <div className="metric text-[20px] sm:text-[24px] font-mono text-ink mt-0.5">
+                    {bacDisplay(summary.peakBac)}
+                    <span className="text-[11px] font-normal text-muted ml-1">%</span>
+                  </div>
+                  <span className="text-[10px] text-faint">
+                    {summary.peakBacAt ? `at ${formatTime(summary.peakBacAt)}` : "no active peak"}
+                  </span>
+                </div>
+
+                <div className="stat">
+                  <span className="text-[10px] font-medium text-muted uppercase tracking-wider">Sober In</span>
+                  <div className="metric text-[20px] sm:text-[24px] font-mono text-ink mt-0.5">
+                    {summary.minutesToClearance && summary.minutesToClearance > 0
+                      ? `${Math.floor(summary.minutesToClearance / 60)}h ${summary.minutesToClearance % 60}m`
+                      : "0m"}
+                  </div>
+                  <span className="text-[10px] text-faint">
+                    {summary.clearanceAt ? `clear at ${formatTime(summary.clearanceAt)}` : "currently clear"}
+                  </span>
+                </div>
+
+                <div className="stat">
+                  <span className="text-[10px] font-medium text-muted uppercase tracking-wider">Total Consumed</span>
+                  <div className="metric text-[20px] sm:text-[24px] font-mono text-ink mt-0.5">
+                    {summary.standardDrinks.toFixed(1)}
+                    <span className="text-[11px] font-normal text-muted ml-1">drinks</span>
+                  </div>
+                  <span className="text-[10px] text-faint">{grams(summary.totalEthanolG)} pure ethanol</span>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* METRICS ROW */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-5 border-t border-[var(--color-line)]">
-          <div className="stat">
-            <span className="text-[11px] font-medium text-muted uppercase tracking-wider">Current BAC</span>
-            <div className="metric text-[26px] sm:text-[30px] font-mono text-ink mt-1">
-              {bacDisplay(summary.currentBac)}
-              <span className="text-[12px] font-normal text-muted ml-1">%</span>
+        {/* WIDGET 2: WATER & FOOD STATS (NEXT TO IT) */}
+        <div className="panel p-5 rounded-xl border border-[var(--color-line)] shadow-md flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--color-line)]">
+              <span className="text-[11px] font-medium text-muted uppercase tracking-wider flex items-center gap-1.5">
+                <ForkKnife size={14} className="text-[var(--color-warn)]" />
+                <Drop size={14} className="text-sky-400" />
+                Stomach Buffer &amp; Hydration
+              </span>
+              <span className="text-[11px] text-faint">
+                {session.meals.length} {session.meals.length === 1 ? "meal" : "meals"} · {totalWaterMl} ml water
+              </span>
             </div>
-            <span className="text-[11px] text-faint">blood alcohol</span>
+
+            {/* Food Buffer Status */}
+            <div className="mt-3.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium text-ink flex items-center gap-1.5">
+                  <ForkKnife size={14} className="text-[var(--color-warn)]" />
+                  Food Absorption Buffer
+                </span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                  foodStatus.hasFood
+                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                    : "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                }`}>
+                  {foodStatus.label}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted mt-1 leading-relaxed">
+                {foodStatus.description}
+              </p>
+            </div>
+
+            {/* Water Hydration Status */}
+            <div className="mt-3.5 pt-3 border-t border-[var(--color-line)]">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium text-ink flex items-center gap-1.5">
+                  <Drop size={14} className="text-sky-400" />
+                  Hydration Balance
+                </span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                  waterStatus.statusClass
+                }`}>
+                  {waterStatus.label}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted mt-1 leading-relaxed">
+                {waterStatus.description}
+              </p>
+            </div>
           </div>
 
-          <div className="stat">
-            <span className="text-[11px] font-medium text-muted uppercase tracking-wider">Projected Peak</span>
-            <div className="metric text-[26px] sm:text-[30px] font-mono text-ink mt-1">
-              {bacDisplay(summary.peakBac)}
-              <span className="text-[12px] font-normal text-muted ml-1">%</span>
+          {/* Quick Water Action Buttons */}
+          <div className="mt-4 pt-3 border-t border-[var(--color-line)] flex items-center justify-between gap-2">
+            <span className="text-[11px] text-muted font-medium">Quick Hydrate:</span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => addWater(250)}
+                className="btn btn-sm text-[11px] py-1 px-2.5 flex items-center gap-1 text-sky-400 border-sky-500/30 hover:bg-sky-500/10"
+              >
+                <Drop size={12} /> +250ml
+              </button>
+              <button
+                type="button"
+                onClick={() => addWater(500)}
+                className="btn btn-sm text-[11px] py-1 px-2.5 flex items-center gap-1 text-sky-400 border-sky-500/30 hover:bg-sky-500/10"
+              >
+                <Drop size={12} /> +500ml
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("food")}
+                className="btn btn-sm text-[11px] py-1 px-2.5 flex items-center gap-1 text-[var(--color-warn)] border-amber-500/30 hover:bg-amber-500/10"
+              >
+                <ForkKnife size={12} /> +Food
+              </button>
             </div>
-            <span className="text-[11px] text-faint">
-              {summary.peakBacAt ? `at ${formatTime(summary.peakBacAt)}` : "no active peak"}
-            </span>
-          </div>
-
-          <div className="stat">
-            <span className="text-[11px] font-medium text-muted uppercase tracking-wider">Sober In</span>
-            <div className="metric text-[26px] sm:text-[30px] font-mono text-ink mt-1">
-              {summary.minutesToClearance && summary.minutesToClearance > 0
-                ? `${Math.floor(summary.minutesToClearance / 60)}h ${summary.minutesToClearance % 60}m`
-                : "0m"}
-            </div>
-            <span className="text-[11px] text-faint">
-              {summary.clearanceAt ? `clear by ${formatTime(summary.clearanceAt)}` : "currently clear"}
-            </span>
-          </div>
-
-          <div className="stat">
-            <span className="text-[11px] font-medium text-muted uppercase tracking-wider">Total Consumed</span>
-            <div className="metric text-[26px] sm:text-[30px] font-mono text-ink mt-1">
-              {summary.standardDrinks.toFixed(1)}
-              <span className="text-[12px] font-normal text-muted ml-1">drinks</span>
-            </div>
-            <span className="text-[11px] text-faint">{grams(summary.totalEthanolG)} pure ethanol</span>
           </div>
         </div>
       </div>
