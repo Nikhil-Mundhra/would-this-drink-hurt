@@ -1,0 +1,20 @@
+{
+  "name": "would-this-drink-hurt",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/*",
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace frontend",
+    "dev:api": "npm run dev --workspace backend",
+    "build": "npm run build --workspace frontend",
+    "test": "npm run test --workspace @wtdh/engine",
+    "typecheck": "npm run typecheck --workspace @wtdh/engine && npm run typecheck --workspace backend && npm run typecheck --workspace frontend"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
